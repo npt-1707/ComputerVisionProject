@@ -10,7 +10,7 @@ parser.add_argument("--ramp_up_length", type=int, default=80, help="ramp up leng
 parser.add_argument("--ramp_down_length", type=int, default=50, help="ramp down length")
 parser.add_argument("--epochs", type=int, default=300, help="number of epochs")
 parser.add_argument("--batch_size", type=int, default=64, help="batch size")
-parser.add_argument("--root", type=str, default="../data", help="data path")
+parser.add_argument("--root", type=str, default="data", help="data path")
 parser.add_argument("--save", type=str, default="save", help="save path")
 parser.add_argument('--seed', type=int, default=-1, help='seed for random behaviors, no seed if negtive')
 args = parser.parse_args()

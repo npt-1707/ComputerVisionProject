@@ -1,0 +1,1 @@
+2023-07-12 03:15:30,992:INFO: Namespace(dataset='cifar10', arch='resnet50', pretrained='pretrained', num_labels=400, fold=0, batch_size=64, uratio=7, num_workers=4, epochs=512, lr=0.03, momentum=0.9, wd=0.0005, ema_decay=0.999, T=0.5, threshold=0.95, wu=1, seed=41, nesterov=False, warmup=5, root='../data', save='save', debug=False, total_steps=65536, eval_steps=128)

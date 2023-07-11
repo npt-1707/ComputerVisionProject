@@ -2,6 +2,7 @@ from fixmatch.fixmatch import FixMatch
 from utils.utils import set_logger, set_seed
 import argparse
 import logging
+import os
 
 parser = argparse.ArgumentParser(description='FixMatch Training')
 availabel_dataset = ["cifar10", "cifar100", "svhn", "stl10"]
@@ -55,21 +56,22 @@ parser.add_argument("--nesterov",
 parser.add_argument("--warmup", type=int, default=5, help="warmup steps")
 parser.add_argument("--root",
                     type=str,
-                    default="../data",
+                    default="data",
                     help="root data directory")
 parser.add_argument("--save", type=str, default="save", help="save path")
 parser.add_argument("--debug", type=bool, default=False, help="debug mode")
-parser.add_argument('--total-steps',
+parser.add_argument('--total_steps',
                     default=2**20,
                     type=int,
                     help='number of total steps to run')
-parser.add_argument('--eval-steps',
+parser.add_argument('--eval_steps',
                     default=1024,
                     type=int,
                     help='number of eval steps to run')
 args = parser.parse_args()
 
-
+if not os.path.exists(args.save):
+    os.makedirs(args.save)
 
 args.total_steps = args.eval_steps * args.epochs
 
