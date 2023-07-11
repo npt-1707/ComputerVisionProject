@@ -1,0 +1,1 @@
+python3 pi/train_pi.py --num_labels 4000 --batch_size 64
