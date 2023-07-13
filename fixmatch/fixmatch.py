@@ -1,4 +1,4 @@
-import torch, math, os, logging
+import torch, os, logging
 from torch.utils.data import DataLoader
 from torch.optim import SGD
 from torch.nn import CrossEntropyLoss
@@ -6,11 +6,11 @@ import torch.nn.functional as F
 from torch.utils.data import RandomSampler, BatchSampler, DataLoader
 from torchvision.models import resnet50, ResNet50_Weights, wide_resnet50_2, Wide_ResNet50_2_Weights, wide_resnet101_2, Wide_ResNet101_2_Weights
 
-from fixmatch.dataset import get_cifar10, get_cifar100, get_svhn, get_stl10
-from fixmatch.ema import ModelEMA
-from fixmatch.lr_scheduler import WarmupCosineLrScheduler
-from fixmatch.model.resnet import ResNet50
-from fixmatch.model.widen_resnet import WideResNet
+from dataset import get_cifar10, get_cifar100, get_svhn, get_stl10
+from ema import ModelEMA
+from lr_scheduler import WarmupCosineLrScheduler
+from model.resnet import ResNet50
+from model.widen_resnet import WideResNet
 
 
 def get_dataloader(args):
@@ -43,11 +43,11 @@ def get_dataloader(args):
                                   batch_sampler=unlabeled_batch_sampler,
                                   num_workers=args.num_workers)
     valid_loader = DataLoader(valid_dataset,
-                              batch_size=args.batch_size * args.uratio,
+                              batch_size=args.batch_size,
                               shuffle=False,
                               num_workers=args.num_workers)
     test_loader = DataLoader(test_dataset,
-                             batch_size=args.batch_size * args.uratio,
+                             batch_size=args.batch_size,
                              shuffle=False,
                              num_workers=args.num_workers)
 
@@ -82,23 +82,23 @@ def get_model(args):
             }],
             "wide_resnet28_2": [
                 WideResNet, {
-                    "depth": 28,
-                    "widen_factor": 2,
-                    "num_classes": out_features[args.dataset]
+                    "n": 28,
+                    "k": 2,
+                    "n_classes": out_features[args.dataset]
                 }
             ],
             "wide_resnet28_4": [
                 WideResNet, {
-                    "depth": 28,
-                    "widen_factor": 4,
-                    "num_classes": out_features[args.dataset]
+                    "n": 28,
+                    "k": 4,
+                    "n_classes": out_features[args.dataset]
                 }
             ],
             "wide_resnet34_2": [
                 WideResNet, {
-                    "depth": 34,
-                    "widen_factor": 2,
-                    "num_classes": out_features[args.dataset]
+                    "n": 34,
+                    "k": 2,
+                    "n_classes": out_features[args.dataset]
                 }
             ],
         }
@@ -144,7 +144,7 @@ class FixMatch:
         self.save_path = args.save
         if not os.path.isdir(self.save_path):
             os.mkdir(self.save_path)
-        
+
         logging.info("Loading checkpoint")
         checkpoints = [
             x for x in os.listdir(self.save_path)
@@ -153,7 +153,11 @@ class FixMatch:
         logging.info(f"Found {len(checkpoints)} checkpoints: {checkpoints}")
         if len(checkpoints) > 0:
             checkpoints = sorted(
-                checkpoints, key=lambda x: int(x.split("_")[-1].split(".")[0]))
+                checkpoints,
+                key=lambda x: int(
+                    x.split(".")[0][len(
+                        f"{self.args.dataset}_{self.args.num_labels}_checkpoint_"
+                    ):]))
             checkpoint = checkpoints[-1]
             checkpoint = torch.load(os.path.join(self.save_path, checkpoint))
             self.model.load_state_dict(checkpoint["model"])
@@ -301,3 +305,29 @@ class FixMatch:
         logging.info(f"Accuracy: {acc:.6f} - Loss: {total_loss:.6f}")
         print(f"Testing: Accuracy: {acc:.6f} - Loss: {total_loss:.6f}"
               ) if self.args.debug else None
+
+    def test_topk(self, topk=(1, 2, 3, 4, 5)):
+        logging.info("Testing")
+        self.ema_model.ema.eval()
+        correct = [0] * len(topk)
+        total = 0
+        total_loss = 0
+        with torch.no_grad():
+            for img, label in self.test_dataloader:
+                img, label = img.to(self.device), label.to(self.device)
+                logit = self.ema_model.ema(img)
+                loss = self.criterion(logit, label)
+                total_loss += loss.item()
+                _, preds = torch.topk(logit, max(topk), dim=1)
+                label_indices = torch.argmax(label, dim=1)
+                total += len(label)
+                for i, k in enumerate(topk):
+                    correct[i] += sum([
+                        1 for j in range(len(preds))
+                        if label_indices[j] in preds[:, :k][j]
+                    ])
+        accuracies = [c / total for c in correct]
+        total_loss /= len(self.test_dataloader)
+        logging.info(
+            f"Top-{', '.join(str(k) for k in topk)} Accuracies: {', '.join(f'{acc:.6f}' for acc in accuracies)} - Loss: {total_loss:.6f}"
+        )

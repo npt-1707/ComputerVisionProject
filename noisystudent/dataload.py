@@ -111,7 +111,7 @@ class unsupervised_Dataset(data.Dataset):
 class CIFAR10(torchvision.datasets.CIFAR10):
 	def __init__(self, mode, args):
 		train = True if mode in ['train', 'unlabeled'] else False
-		super().__init__(root='./data/CIFAR10', train=train, download=True, transform=None)
+		super().__init__(root=args.root, train=train, download=True, transform=None)
 		self.mode = mode
 		self.dataname = "CIFAR10"
 		self.classes = np.arange(10)
@@ -181,7 +181,7 @@ class CIFAR10(torchvision.datasets.CIFAR10):
 class CIFAR100(torchvision.datasets.CIFAR100):
 	def __init__(self, mode, args):
 		train = True if mode =='train' else False
-		super().__init__(root='./data/CIFAR100', train=train, download=True, transform=None)
+		super().__init__(root=args.root, train=train, download=True, transform=None)
 		self.mode = mode
 		self.dataname = "CIFAR100"
 		self.classes = np.arange(100)

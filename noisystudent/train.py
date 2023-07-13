@@ -18,9 +18,9 @@ import pathlib
 import copy
 from tqdm import tqdm
 
-from noisystudent.resnet import *
-from noisystudent.utils import *
-from noisystudent.dataload import CIFAR10, CIFAR100
+from resnet import *
+from utils import *
+from dataload import CIFAR10, CIFAR100
 
 
 parser = argparse.ArgumentParser(description='Noisy Student CIFAR10/CIFAR100 ResNet')
@@ -34,7 +34,7 @@ parser.add_argument('--model', default='ResNet18', type=str, help='[ResNet18, Re
 parser.add_argument('--batch_size', default=256, type=int, help='Training batch size.')
 parser.add_argument('--ts_iteration', default=3, type=int, help='number of student to teacher switch iterations')
 parser.add_argument('--gradual_growth', default=True, type=bool, help='whether to increase student model size gradually')
-
+parser.add_argument('--root', default='../data', type=str, help='data directory')
 parser.add_argument('--name', default='noisy_student', type=str, help='Name of the experiment')
 
 args = parser.parse_args()

@@ -2,7 +2,7 @@ import numpy as np, random, torch
 from torchvision import transforms, datasets
 import torchvision
 from PIL import Image
-from fixmatch.random_augment import RandAugment
+from random_augment import RandAugment
 
 
 def split_label_unlabel_valid(labels, num_label, num_classes):

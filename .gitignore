@@ -1,8 +1,5 @@
 data
-pi/save
-fixmatch/save
-noisystudent/data
-noisystudent/model_save
+save
 test.ipynb
 __pycache__
 .DS_Store

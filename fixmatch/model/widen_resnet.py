@@ -1,127 +1,186 @@
-import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
+from torch.nn import BatchNorm2d
 
 
-class BasicBlock(nn.Module):
+class BasicBlockPreAct(nn.Module):
 
-    def __init__(self, in_planes, out_planes, stride, dropRate=0.0):
-        super(BasicBlock, self).__init__()
-        self.bn1 = nn.BatchNorm2d(in_planes)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv2d(in_planes,
-                               out_planes,
+    def __init__(self,
+                 in_chan,
+                 out_chan,
+                 drop_rate=0,
+                 stride=1,
+                 pre_res_act=False):
+        super(BasicBlockPreAct, self).__init__()
+        self.bn1 = BatchNorm2d(in_chan, momentum=0.001)
+        self.relu1 = nn.LeakyReLU(inplace=True, negative_slope=0.1)
+        self.conv1 = nn.Conv2d(in_chan,
+                               out_chan,
                                kernel_size=3,
                                stride=stride,
                                padding=1,
                                bias=False)
-        self.bn2 = nn.BatchNorm2d(out_planes)
-        self.relu2 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_planes,
-                               out_planes,
+        self.bn2 = BatchNorm2d(out_chan, momentum=0.001)
+        self.relu2 = nn.LeakyReLU(inplace=True, negative_slope=0.1)
+        self.dropout = nn.Dropout(drop_rate) if not drop_rate == 0 else None
+        self.conv2 = nn.Conv2d(out_chan,
+                               out_chan,
                                kernel_size=3,
                                stride=1,
                                padding=1,
                                bias=False)
-        self.droprate = dropRate
-        self.equalInOut = (in_planes == out_planes)
-        self.convShortcut = (not self.equalInOut) and nn.Conv2d(
-            in_planes,
-            out_planes,
-            kernel_size=1,
-            stride=stride,
-            padding=0,
-            bias=False) or None
+        self.downsample = None
+        if in_chan != out_chan or stride != 1:
+            self.downsample = nn.Conv2d(in_chan,
+                                        out_chan,
+                                        kernel_size=1,
+                                        stride=stride,
+                                        bias=False)
+        self.pre_res_act = pre_res_act
+        self.init_weight()
 
     def forward(self, x):
-        if not self.equalInOut:
-            x = self.relu1(self.bn1(x))
-        else:
-            out = self.relu1(self.bn1(x))
-        out = self.relu2(self.bn2(self.conv1(out if self.equalInOut else x)))
-        if self.droprate > 0:
-            out = F.dropout(out, p=self.droprate, training=self.training)
-        out = self.conv2(out)
-        return torch.add(x if self.equalInOut else self.convShortcut(x), out)
+        bn1 = self.bn1(x)
+        act1 = self.relu1(bn1)
+        residual = self.conv1(act1)
+        residual = self.bn2(residual)
+        residual = self.relu2(residual)
+        if not self.dropout is None:
+            residual = self.dropout(residual)
+        residual = self.conv2(residual)
+
+        shortcut = act1 if self.pre_res_act else x
+        if self.downsample is not None:
+            shortcut = self.downsample(shortcut)
+
+        out = shortcut + residual
+        return out
+
+    def init_weight(self):
+        for _, md in self.named_modules():
+            if isinstance(md, nn.Conv2d):
+                nn.init.kaiming_normal_(md.weight,
+                                        a=0,
+                                        mode='fan_in',
+                                        nonlinearity='leaky_relu')
+                if not md.bias is None: nn.init.constant_(md.bias, 0)
 
 
-class NetworkBlock(nn.Module):
+class WideResnetBackbone(nn.Module):
 
-    def __init__(self,
-                 nb_layers,
-                 in_planes,
-                 out_planes,
-                 block,
-                 stride,
-                 dropRate=0.0):
-        super(NetworkBlock, self).__init__()
-        self.layer = self._make_layer(block, in_planes, out_planes, nb_layers,
-                                      stride, dropRate)
+    def __init__(self, k=1, n=28, drop_rate=0):
+        super(WideResnetBackbone, self).__init__()
+        self.k, self.n = k, n
+        assert (self.n - 4) % 6 == 0
+        n_blocks = (self.n - 4) // 6
+        n_layers = [
+            16,
+        ] + [self.k * 16 * (2**i) for i in range(3)]
 
-    def _make_layer(self, block, in_planes, out_planes, nb_layers, stride,
-                    dropRate):
-        layers = []
-        for i in range(nb_layers):
+        self.conv1 = nn.Conv2d(3,
+                               n_layers[0],
+                               kernel_size=3,
+                               stride=1,
+                               padding=1,
+                               bias=False)
+        self.layer1 = self.create_layer(
+            n_layers[0],
+            n_layers[1],
+            bnum=n_blocks,
+            stride=1,
+            drop_rate=drop_rate,
+            pre_res_act=True,
+        )
+        self.layer2 = self.create_layer(
+            n_layers[1],
+            n_layers[2],
+            bnum=n_blocks,
+            stride=2,
+            drop_rate=drop_rate,
+            pre_res_act=False,
+        )
+        self.layer3 = self.create_layer(
+            n_layers[2],
+            n_layers[3],
+            bnum=n_blocks,
+            stride=2,
+            drop_rate=drop_rate,
+            pre_res_act=False,
+        )
+        self.bn_last = BatchNorm2d(n_layers[3], momentum=0.001)
+        self.relu_last = nn.LeakyReLU(inplace=True, negative_slope=0.1)
+        self.init_weight()
+
+    def create_layer(
+        self,
+        in_chan,
+        out_chan,
+        bnum,
+        stride=1,
+        drop_rate=0,
+        pre_res_act=False,
+    ):
+        layers = [
+            BasicBlockPreAct(in_chan,
+                             out_chan,
+                             drop_rate=drop_rate,
+                             stride=stride,
+                             pre_res_act=pre_res_act),
+        ]
+        for _ in range(bnum - 1):
             layers.append(
-                block(i == 0 and in_planes or out_planes, out_planes,
-                      i == 0 and stride or 1, dropRate))
+                BasicBlockPreAct(
+                    out_chan,
+                    out_chan,
+                    drop_rate=drop_rate,
+                    stride=1,
+                    pre_res_act=False,
+                ))
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        return self.layer(x)
+        feat = self.conv1(x)
+
+        feat = self.layer1(feat)
+        feat2 = self.layer2(feat)  # 1/2
+        feat4 = self.layer3(feat2)  # 1/4
+
+        feat4 = self.bn_last(feat4)
+        feat4 = self.relu_last(feat4)
+        return feat2, feat4
+
+    def init_weight(self):
+        for _, child in self.named_children():
+            if isinstance(child, nn.Conv2d):
+                n = child.kernel_size[0] * child.kernel_size[
+                    0] * child.out_channels
+                nn.init.normal_(child.weight, 0, 1. / ((0.5 * n)**0.5))
+                #  nn.init.kaiming_normal_(
+                #      child.weight, a=0.1, mode='fan_out',
+                #      nonlinearity='leaky_relu'
+                #  )
+                if not child.bias is None: nn.init.constant_(child.bias, 0)
 
 
 class WideResNet(nn.Module):
+    '''
+    for wide-resnet-28-10, the definition should be WideResnet(n_classes, 10, 28)
+    '''
 
-    def __init__(self, depth, num_classes, widen_factor=1, dropRate=0.0):
+    def __init__(self, n_classes, k=1, n=28):
         super(WideResNet, self).__init__()
-        nChannels = [
-            16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor
-        ]
-        assert ((depth - 4) % 6 == 0)
-        n = (depth - 4) // 6
-        block = BasicBlock
-        # 1st conv before any network block
-        self.conv1 = nn.Conv2d(3,
-                               nChannels[0],
-                               kernel_size=3,
-                               stride=1,
-                               padding=1,
-                               bias=False)
-        # 1st block
-        self.block1 = NetworkBlock(n, nChannels[0], nChannels[1], block, 1,
-                                   dropRate)
-        # 2nd block
-        self.block2 = NetworkBlock(n, nChannels[1], nChannels[2], block, 2,
-                                   dropRate)
-        # 3rd block
-        self.block3 = NetworkBlock(n, nChannels[2], nChannels[3], block, 2,
-                                   dropRate)
-        # global average pooling and classifier
-        self.bn1 = nn.BatchNorm2d(nChannels[3])
-        self.relu = nn.ReLU(inplace=True)
-        self.fc = nn.Linear(nChannels[3], num_classes)
-        self.nChannels = nChannels[3]
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-            elif isinstance(m, nn.Linear):
-                m.bias.data.zero_()
+        self.n_layers, self.k = n, k
+        self.backbone = WideResnetBackbone(k=k, n=n)
+        self.classifier = nn.Linear(64 * self.k, n_classes, bias=True)
 
     def forward(self, x):
-        out = self.conv1(x)
-        out = self.block1(out)
-        out = self.block2(out)
-        out = self.block3(out)
-        out = self.relu(self.bn1(out))
+        feat = self.backbone(x)[-1]
+        feat = torch.mean(feat, dim=(2, 3))
+        feat = self.classifier(feat)
+        return feat
 
-        out = F.avg_pool2d(out, 8)
-        out = out.view(-1, self.nChannels)
-        out = self.fc(out)
-        return out
+    def init_weight(self):
+        nn.init.xavier_normal_(self.classifier.weight)
+        if not self.classifier.bias is None:
+            nn.init.constant_(self.classifier.bias, 0)

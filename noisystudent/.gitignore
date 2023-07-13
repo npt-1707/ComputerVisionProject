@@ -1,3 +1,4 @@
-__pycache__/
-data/
-results/
+__pycache__
+data
+results
+model_save

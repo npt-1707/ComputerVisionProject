@@ -1,1 +1,0 @@
-python3 noisystudent/train_noisy_student.py --lr 0.03 --dataset CIFAR10
