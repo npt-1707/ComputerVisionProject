@@ -6,11 +6,11 @@ import torch.nn.functional as F
 from torch.utils.data import RandomSampler, BatchSampler, DataLoader
 from torchvision.models import resnet50, ResNet50_Weights, wide_resnet50_2, Wide_ResNet50_2_Weights, wide_resnet101_2, Wide_ResNet101_2_Weights
 
-from dataset import get_cifar10, get_cifar100, get_svhn, get_stl10
-from ema import ModelEMA
-from lr_scheduler import WarmupCosineLrScheduler
-from model.resnet import ResNet50
-from model.widen_resnet import WideResNet
+from fixmatch.dataset import get_cifar10, get_cifar100, get_svhn, get_stl10
+from fixmatch.ema import ModelEMA
+from fixmatch.lr_scheduler import WarmupCosineLrScheduler
+from fixmatch.model.resnet import ResNet50
+from fixmatch.model.widen_resnet import WideResNet
 
 
 def get_dataloader(args):

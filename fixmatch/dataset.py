@@ -2,7 +2,7 @@ import numpy as np, random, torch
 from torchvision import transforms, datasets
 import torchvision
 from PIL import Image
-from random_augment import RandAugment
+from fixmatch.random_augment import RandAugment
 
 
 def split_label_unlabel_valid(labels, num_label, num_classes):
@@ -272,14 +272,14 @@ class STL10SSL(datasets.STL10):
 
         self.weak = transforms.Compose([
             transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(size=32,
-                                  padding=int(32 * 0.125),
+            transforms.RandomCrop(size=96,
+                                  padding=int(96 * 0.125),
                                   padding_mode='reflect')
         ])
         self.strong = transforms.Compose([
             transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(size=32,
-                                  padding=int(32 * 0.125),
+            transforms.RandomCrop(size=96,
+                                  padding=int(96 * 0.125),
                                   padding_mode='reflect'),
             RandAugment(n=2, m=10)
         ])
