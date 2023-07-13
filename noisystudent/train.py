@@ -18,9 +18,9 @@ import pathlib
 import copy
 from tqdm import tqdm
 
-from resnet import *
-from utils import *
-from dataload import CIFAR10, CIFAR100
+from noisystudent.resnet import *
+from noisystudent.utils import *
+from noisystudent.dataload import CIFAR10, CIFAR100
 
 
 parser = argparse.ArgumentParser(description='Noisy Student CIFAR10/CIFAR100 ResNet')
@@ -208,10 +208,10 @@ def train_student(epoch, model_student, model_teacher, labeled_loader, unlabeled
 
         outputs1 = model_student(inputs)
         loss_1 = criterion(outputs1, target) # reduction : mean
-        
+
         lambda_u = 1
         loss = torch.mean(loss_0) * lambda_u + loss_1
-        
+
         loss.backward()
         optimizer_student.step()
 
@@ -326,7 +326,7 @@ if __name__ == "__main__":
         print('\n[{}/{}] iterative training on student'.format(i+1, args.ts_iteration))
 
         for epoch in range(args.epochs):
-            # teacher model helps student model 
+            # teacher model helps student model
             # by providing 'pseudo label on unlabeled data' to the student model
             train_log = train_student(epoch, model_student, model_teacher, labeled_loader, unlabeled_loader)
             exp_log = train_log.copy()
@@ -349,7 +349,7 @@ if __name__ == "__main__":
             model_student = create_model(model_list[i+2])
             model_student = model_student.to(device)
             if device == 'cuda':
-                model_student = torch.nn.DataParallel(model_student) 
+                model_student = torch.nn.DataParallel(model_student)
 
             optimizer_student = optim.SGD(model_student.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4, nesterov=True, dampening=0)
             scheduler_student = torch.optim.lr_scheduler.StepLR(optimizer_student, step_size=5, gamma=0.97)

@@ -8,8 +8,8 @@ import torchvision
 import torchvision.transforms as transforms
 from PIL import Image
 
-from archive import autoaug_policy, autoaug_paper_cifar10, fa_reduced_cifar10
-from augmentations import *
+from noisystudent.archive import autoaug_policy, autoaug_paper_cifar10, fa_reduced_cifar10
+from noisystudent.augmentations import *
 
 
 class CutoutDefault(object):
