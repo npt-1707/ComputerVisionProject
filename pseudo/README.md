@@ -27,3 +27,17 @@
   + "logging_file_pseudo": log file for retraing with pseudo labels
   
   + "model_path": final model save path
+
+  + "learining_rate_p2": lr phrase 2
+
+  + "weight_decay_p2": weight decay phrase 2
+
+  + "epoch_p2": epoch phrase 2
+
+  + "batch_size_p2": batch size phrase 2
+
+  + "margin_p2":loss margin phrase 2
+
+  + "results": result file path to save pair predictions and labels
+
+  + "classification_report": json file path save classification matric with accuracy and f1

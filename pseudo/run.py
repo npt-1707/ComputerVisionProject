@@ -21,7 +21,7 @@ import torchvision.transforms as T
 import torch
 # from datasets import Image
 from PIL import Image
-
+from datasets import ClassLabel
 import numpy as np
 from tqdm import tqdm
 import torch
@@ -145,34 +145,35 @@ class ClipModel(torch.nn.Module):
     super(ClipModel,self).__init__()
     self.baseline = model
     self.device = device
+    self.label =  tokenizer([f"a photo of a {i}" for i in test_dataset.features['label'].names], return_tensors="pt", padding=True)
     self.img_processor = img_processor
   def forward(self,image, positive, negative):
     image = self.img_processor(image, return_tensors = "pt")["pixel_values"]
-    positive_logits = self.baseline.forward(pixel_values = image.to(self.device),input_ids = positive["input_ids"].to(self.device), attention_mask =positive["attention_mask"].to(self.device)).logits_per_image.softmax(dim=1)
-    negative_logits = self.baseline.forward(pixel_values = image.to(self.device),input_ids = negative["input_ids"].to(self.device), attention_mask =negative["attention_mask"].to(self.device)).logits_per_image.softmax(dim=1)
-    return positive_logits, negative_logits
+    image_embedd = self.baseline.get_image_features(pixel_values =image.to(self.device))
+    positive_embedd = self.baseline.get_text_features(input_ids = positive["input_ids"].to(self.device), attention_mask =positive["attention_mask"].to(self.device))
+    negative_embedd = self.baseline.get_text_features(input_ids = negative["input_ids"].to(self.device), attention_mask =negative["attention_mask"].to(self.device))
+    positive_logits = torch.nn.functional.cosine_similarity(image_embedd,positive_embedd,dim = 1)
+    negative_logits = torch.nn.functional.cosine_similarity(image_embedd, negative_embedd,dim = 1)
+    label_logits = self.baseline.forward(pixel_values = image.to(self.device),input_ids = self.label["input_ids"].to(self.device), attention_mask =self.label["attention_mask"].to(self.device)).logits_per_image
+    # positive_logits = torch.diagonal(self.baseline.forward(pixel_values = image.to(self.device),input_ids = positive["input_ids"].to(self.device), attention_mask =positive["attention_mask"].to(self.device)).logits_per_image,0,0,1)
+    # negative_logits = torch.diagonal(self.baseline.forward(pixel_values = image.to(self.device),input_ids = negative["input_ids"].to(self.device), attention_mask =negative["attention_mask"].to(self.device)).logits_per_image,0,0,1)
+    # print("Positive: ",positive_logits)
+    # print("Negative: ",negative_logits)
+    return positive_logits, negative_logits, label_logits, image_embedd
   def predict(self, image):
     self.baseline.eval()
-    labels = [f"a photo of a {i}" for i in new_train_labeled_dataset.features['label'].names]
     image = self.img_processor(image,return_tensors = "pt")["pixel_values"]
-    label_tok = tokenizer(labels, return_tensors="pt", padding=True)
-    outputs = self.baseline(pixel_values = image.to(self.device),input_ids = label_tok["input_ids"].to(self.device), attention_mask =label_tok["attention_mask"].to(self.device))
+    outputs = self.baseline(pixel_values = image.to(self.device),input_ids = self.label["input_ids"].to(self.device), attention_mask =self.label["attention_mask"].to(self.device))
     logits_per_image = outputs.logits_per_image
-    # print(logits_per_image)
     pred = torch.argmax(logits_per_image,dim = -1)
-    return pred, torch.max(logits_per_image)
+    return pred, torch.max(logits_per_image.softmax(dim=1))
   def predict_all(self, images):
-    # print(images)
-    preds = [self.predict(i)[0] for i in images]
-    return torch.stack(preds)
-
-class TripletLoss(torch.nn.Module):
-  def __init__(self, margin):
-    super(TripletLoss,self).__init__()
-    self.margin = margin
-  def forward(self, pos_dis, neg_dis, size_avg = True):
-    losses = torch.nn.functional.relu(-pos_dis + neg_dis + self.margin)
-    return losses.mean() if size_avg else losses.sum()
+    self.baseline.eval()
+    images = self.img_processor(images,return_tensors = "pt")["pixel_values"]
+    outputs = self.baseline(pixel_values = images.to(self.device),input_ids = self.label["input_ids"].to(self.device), attention_mask =self.label["attention_mask"].to(self.device))
+    logits_per_image = outputs.logits_per_image.softmax(dim=1)
+    preds = torch.argmax(logits_per_image,dim = -1)
+    return preds
 
 def collate(*batch):
   minibatch = batch[0]
@@ -200,8 +201,10 @@ test_dataloader = torch.utils.data.DataLoader(test_dataset.with_format("torch"),
 
 clip = ClipModel(model,device, image_processor).to(device)
 optimizer = torch.optim.AdamW(clip.parameters(), lr=learning_rate, weight_decay=weight_decay)
-criterion = TripletLoss(margin= margin).to(device)
+criterion2 = torch.nn.CrossEntropyLoss().to(device)
 
+count = 0
+minl = 2
 for ep in range(epoch):
   train_loss = 0
   valid_loss = 0
@@ -209,23 +212,36 @@ for ep in range(epoch):
   clip.train()
   for i,batch in tqdm.tqdm(enumerate(train_labeled_dataloader),total = len(train_labeled_dataloader)):
     image, positive, negative,label = batch
-    pos_logits, neg_logits = clip(image.to(device), positive.to(device), negative.to(device))
+    pos_logits, neg_logits,lab_logits,image_embedd = clip(image.to(device), positive.to(device), negative.to(device))
     optimizer.zero_grad()
-    loss = criterion(pos_logits, neg_logits)
+    # loss = criterion(pos_logits, neg_logits)
+    loss = criterion2(lab_logits, label.to(device))
+    # loss = criterion3(image_embedd.unsqueeze(1), label)
     train_loss += loss
     loss.backward()
     optimizer.step()
   clip.eval()
   with torch.no_grad():
     for i,batch in tqdm.tqdm(enumerate(validation_dataloader),total = len(validation_dataloader)):
-      image, positive, negative, label = batch
-      pos_logits, neg_logits = clip(image.to(device), positive.to(device), negative.to(device))
-      loss = criterion(pos_logits, neg_logits)
+      image1, positive1, negative1, label1 = batch
+      pos_logits1, neg_logits1,lab_logits1,image_embedd1 = clip(image1.to(device), positive1.to(device), negative1.to(device))
+      # print(pos_logits, neg_logits)
+      # loss = criterion(pos_logits, neg_logits)
+      loss = criterion2(lab_logits1, label1.to(device))
+      # loss = criterion3(image_embedd1.unsqueeze(1), label1)
       valid_loss += loss
-      valid_acc += accuracy(clip.predict_all(image.to(device)).squeeze(), label.to(device))
+      valid_acc += accuracy(clip.predict_all(image1.to(device)).squeeze(), label1.to(device))
+      # print(accuracy(clip.predict_all(image.to(device)).squeeze(), label.to(device)))
+      # break
+  if valid_loss.item()/len(validation_dataloader) < minl:
+    minl = valid_loss.item()/len(validation_dataloader)
+  if valid_loss.item()/len(validation_dataloader) > minl:
+    count+=1
+    if count > 5:
+        break
   print("\n Epoch "+str(ep)+", Training Loss: "+str(train_loss.item()/len(train_labeled_dataloader))\
             +", Validation Loss: " + str(valid_loss.item()/len(validation_dataloader))+ ",Validation Accuracy: "+ str(valid_acc/len(validation_dataloader)))
-  with open(config["logging_file"],"w") as f:
+  with open(config["logging_file"],"a") as f:
     f.write("Epoch "+str(ep)+", Training Loss: "+str(train_loss.item()/len(train_labeled_dataloader))\
             +", Validation Loss: " + str(valid_loss.item()/len(validation_dataloader))+ ",Validation Accuracy: "+ str(valid_acc/len(validation_dataloader)))
   torch.save(clip.state_dict(), config["checkpoint"])
@@ -238,11 +254,15 @@ train_unlabeled_dataset = train_unlabeled_dataset.map(resize, batched = True, lo
 thres = config["pseudo_thres"]
 images = []
 labels = []
-for i in train_unlabeled_dataset["image"]:
-  if clip.predict(i)[1] > thres:
+train_unlabeled_dataset = dataset["train_unlabeled"]
+unlabel_images = list(train_unlabeled_dataset["image"])
+for i in tqdm.tqdm(unlabel_images,total = len(unlabel_images)):
+  output = clip.predict(i)
+  if output[1].item() > thres:
     images.append(i)
-    labels.appen(clip.predict(i)[0].item())
+    labels.append(output[0].item())
 pseudo_label_dataset = datasets.Dataset.from_dict({"image":images, "label":labels})
+pseudo_label_dataset = pseudo_label_dataset.cast_column("label",ClassLabel(num_classes = len(test_dataset.features['label'].names),names=test_dataset.features['label'].names))
 
 """## Iter 2
 
@@ -250,13 +270,23 @@ pseudo_label_dataset = datasets.Dataset.from_dict({"image":images, "label":label
 """
 
 augment_train_pseudo_dataset = pseudo_label_dataset.map(image_augmentation, batched = True, load_from_cache_file =  False)
+pseudo_label_dataset = pseudo_label_dataset.map(resize, batched = True, load_from_cache_file =  False)
 new_train_pseudo_dataset_1= datasets.concatenate_datasets([new_train_labeled_dataset,pseudo_label_dataset, augment_train_pseudo_dataset])
 
 """### Training"""
 
+learning_rate = config["learning_rate_p2"]
+weight_decay = config["weight_decay_p2"]
+epoch = config["epoch_p2"]
+batch_size = config["batch_size_p2"]
+margin = config["margin_p2"]
 new_train_pseudo_dataloader = torch.utils.data.DataLoader(new_train_pseudo_dataset_1.with_format("torch"), batch_size=batch_size, shuffle=True, collate_fn = collate)
-optimizer = torch.optim.AdamW(clip.parameters(), lr=learning_rate, weight_decay=weight_decay)
-criterion = TripletLoss(margin= margin).to(device)
+validation_dataloader = torch.utils.data.DataLoader(validation_dataset.with_format("torch"), batch_size=batch_size, shuffle=True, collate_fn = collate)
+optimizer1 = torch.optim.AdamW(clip.parameters(), lr=learning_rate, weight_decay=weight_decay)
+# criterion = TripletLoss(margin= margin).to(device)
+criterion2 = torch.nn.CrossEntropyLoss()
+count1 = 0
+minl1 = 2
 for ep in range(epoch):
   train_loss = 0
   valid_loss = 0
@@ -264,23 +294,31 @@ for ep in range(epoch):
   clip.train()
   for i,batch in tqdm.tqdm(enumerate(new_train_pseudo_dataloader),total = len(new_train_pseudo_dataloader)):
     image, positive, negative,label = batch
-    pos_logits, neg_logits = clip(image.to(device), positive.to(device), negative.to(device))
-    optimizer.zero_grad()
-    loss = criterion(pos_logits, neg_logits)
+    pos_logits, neg_logits,lab_logits,image_embedd = clip(image.to(device), positive.to(device), negative.to(device))
+    optimizer1.zero_grad()
+    # loss = criterion(pos_logits, neg_logits)
+    loss = criterion2(lab_logits, label.to(device))
     train_loss += loss
     loss.backward()
-    optimizer.step()
+    optimizer1.step()
   clip.eval()
   with torch.no_grad():
     for i,batch in tqdm.tqdm(enumerate(validation_dataloader),total = len(validation_dataloader)):
-      image, positive, negative, label = batch
-      pos_logits, neg_logits = clip(image.to(device), positive.to(device), negative.to(device))
-      loss = criterion(pos_logits, neg_logits)
+      image1, positive1, negative1, label1 = batch
+      pos_logits, neg_logits,lab_logits,image_embedd = clip(image1.to(device), positive1.to(device), negative1.to(device))
+      # loss = criterion(pos_logits, neg_logits)
+      loss = criterion2(lab_logits, label1.to(device))
       valid_loss += loss
-      valid_acc += accuracy(clip.predict_all(image.to(device)).squeeze(), label.to(device))
+      valid_acc += accuracy(clip.predict_all(image1.to(device)).squeeze(), label1.to(device))
+  if valid_loss.item()/len(validation_dataloader) < minl1:
+    minl = valid_loss.item()/len(validation_dataloader)
+  if valid_loss.item()/len(validation_dataloader) > minl1:
+    count1+=1
+    if count1 > 3:
+        break
   print("\n Epoch "+str(ep)+", Training Loss: "+str(train_loss.item()/len(train_labeled_dataloader))\
             +", Validation Loss: " + str(valid_loss.item()/len(validation_dataloader))+ ",Validation Accuracy: "+ str(valid_acc/len(validation_dataloader)))
-  with open(config["logging_file_pseudo"],"w") as f:
+  with open(config["logging_file_pseudo"],"a") as f:
     f.write("Epoch "+str(ep)+", Training Loss: "+str(train_loss.item()/len(train_labeled_dataloader))\
             +", Validation Loss: " + str(valid_loss.item()/len(validation_dataloader))+ ",Validation Accuracy: "+ str(valid_acc/len(validation_dataloader)))
   torch.save_state_dict(clip.state_dict(),config["model_path"])
@@ -290,7 +328,9 @@ for ep in range(epoch):
 #clip = ClipModel(model,device, image_processor).to(device)
 #clip.load_state_dict(torch.load("checkpoint_final.pt"))
 label = test_dataset["label"]
-predictions = [clip.predict(i)[0].item() for i in test_dataset["image"]]
-
-
-classification_report(np.array(predictions),np.array(label), labels = test_dataset.features["label"].names )
+predictions = [clip.predict(i)[0].item() for i in tqdm.tqdm(test_dataset["image"],total = len(test_dataset["image"]))]
+with open(config["results"], "a") as f:
+    f.writelines([str(i[0])+' , '+str(i[1]) for i in list(zip(label,predictions))])
+result = classification_report(np.array(predictions),np.array(label), output_dict=True)
+with open(config["classification_report"],"w") as f:
+  json.dump(result, f)
